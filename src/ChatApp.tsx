@@ -9,6 +9,58 @@ import { StatePanel, type AccumulatedState } from './components/StatePanel';
 
 type InputMode = 'text' | 'audio' | 'image' | 'snippet';
 
+// API response types
+interface ApiState {
+  message_count: number;
+  text_count: number;
+  audio_count: number;
+  image_count: number;
+  snippet_count: number;
+  keywords: string[];
+  topics: string[];
+  code_languages: string[];
+}
+
+interface ApiMessage {
+  id: string;
+  type: string;
+  content: string;
+  timestamp: string;
+  role: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface ChatApiResponse {
+  message: ApiMessage;
+  state: ApiState;
+}
+
+// Convert API state to frontend state
+function convertState(apiState: ApiState): AccumulatedState {
+  return {
+    messageCount: apiState.message_count,
+    textCount: apiState.text_count,
+    audioCount: apiState.audio_count,
+    imageCount: apiState.image_count,
+    snippetCount: apiState.snippet_count,
+    keywords: apiState.keywords,
+    topics: apiState.topics,
+    codeLanguages: apiState.code_languages,
+  };
+}
+
+// Convert API message to frontend message
+function convertMessage(apiMsg: ApiMessage): Message {
+  return {
+    id: apiMsg.id,
+    type: apiMsg.type as MessageType,
+    content: apiMsg.content,
+    timestamp: new Date(apiMsg.timestamp),
+    role: apiMsg.role as 'user' | 'assistant',
+    metadata: apiMsg.metadata,
+  };
+}
+
 function ChatApp() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -28,6 +80,21 @@ function ChatApp() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Load initial state from API
+  useEffect(() => {
+    fetch('/api/chat/state')
+      .then(res => res.json())
+      .then(data => {
+        if (data.state) {
+          setAccumulatedState(convertState(data.state));
+        }
+        if (data.messages) {
+          setMessages(data.messages.map(convertMessage));
+        }
+      })
+      .catch(err => console.error('Failed to load state:', err));
+  }, []);
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -39,7 +106,6 @@ function ChatApp() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         if (e.shiftKey) {
-          // Clear all
           clearChat();
         } else {
           textInputRef.current?.focus();
@@ -52,164 +118,223 @@ function ChatApp() {
 
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-  const extractKeywords = (text: string): string[] => {
-    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may',
-      'might', 'must', 'can', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
-      'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between',
-      'and', 'but', 'if', 'or', 'because', 'until', 'while', 'this', 'that', 'these',
-      'those', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him', 'his', 'she',
-      'her', 'it', 'its', 'they', 'them', 'their', 'what', 'which', 'who', 'whom']);
-
-    const words = text.toLowerCase().match(/\b[a-z]{3,}\b/g) || [];
-    return [...new Set(words.filter(w => !stopWords.has(w)))].slice(0, 10);
-  };
-
-  const updateState = useCallback((type: MessageType, content: string, language?: string) => {
-    setAccumulatedState(prev => {
-      const newState = { ...prev, messageCount: prev.messageCount + 1 };
-
-      switch (type) {
-        case 'text':
-          newState.textCount = prev.textCount + 1;
-          const keywords = extractKeywords(content);
-          newState.keywords = [...new Set([...prev.keywords, ...keywords])].slice(0, 20);
-          break;
-        case 'audio':
-          newState.audioCount = prev.audioCount + 1;
-          if (!prev.topics.includes('voice')) {
-            newState.topics = [...prev.topics, 'voice'];
-          }
-          break;
-        case 'image':
-          newState.imageCount = prev.imageCount + 1;
-          if (!prev.topics.includes('visual')) {
-            newState.topics = [...prev.topics, 'visual'];
-          }
-          break;
-        case 'snippet':
-          newState.snippetCount = prev.snippetCount + 1;
-          if (!prev.topics.includes('code')) {
-            newState.topics = [...prev.topics, 'code'];
-          }
-          if (language && !prev.codeLanguages.includes(language)) {
-            newState.codeLanguages = [...prev.codeLanguages, language];
-          }
-          break;
-      }
-
-      return newState;
-    });
-  }, []);
-
-  const addMessage = useCallback((type: MessageType, content: string, metadata?: Record<string, unknown>) => {
-    const message: Message = {
-      id: generateId(),
-      type,
-      content,
-      timestamp: new Date(),
-      role: 'user',
-      metadata,
-    };
-
-    setMessages(prev => [...prev, message]);
-    updateState(type, content, metadata?.language as string);
-
-    // Simulate assistant response
-    setIsProcessing(true);
-    setTimeout(() => {
-      const responseContent = generateResponse(type, content, metadata);
-      const response: Message = {
-        id: generateId(),
-        type: 'text',
-        content: responseContent,
-        timestamp: new Date(),
-        role: 'assistant',
-      };
-      setMessages(prev => [...prev, response]);
-      setIsProcessing(false);
-    }, 500 + Math.random() * 500);
-  }, [updateState]);
-
-  const generateResponse = (type: MessageType, content: string, metadata?: Record<string, unknown>): string => {
-    switch (type) {
-      case 'text':
-        return `Received your message. Extracted keywords and updated the conversation state.`;
-      case 'audio':
-        return `Received audio message (${((metadata?.duration as number) || 0).toFixed(1)}s). Transcription: "${metadata?.transcription || 'Processing...'}"`;
-      case 'image':
-        return `Received image. Detected features: ${(metadata?.features as string[])?.join(', ') || 'analyzing...'}`;
-      case 'snippet':
-        return `Received ${metadata?.language || 'code'} snippet (${(metadata?.lineCount as number) || 0} lines). Added to state.`;
-      default:
-        return 'Message received.';
-    }
-  };
-
-  const handleTextSubmit = (e: React.FormEvent) => {
+  const handleTextSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() || isProcessing) return;
 
-    addMessage('text', inputText.trim());
+    const content = inputText.trim();
     setInputText('');
+    setIsProcessing(true);
+
+    // Add user message optimistically
+    const userMessage: Message = {
+      id: generateId(),
+      type: 'text',
+      content,
+      timestamp: new Date(),
+      role: 'user',
+      metadata: { length: content.length },
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    try {
+      const response = await fetch('/api/chat/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+
+      if (!response.ok) throw new Error('Failed to send message');
+
+      const data: ChatApiResponse = await response.json();
+
+      // Add assistant response
+      setMessages(prev => [...prev, convertMessage(data.message)]);
+      setAccumulatedState(convertState(data.state));
+    } catch (error) {
+      console.error('Error sending text message:', error);
+      // Add error message
+      setMessages(prev => [...prev, {
+        id: generateId(),
+        type: 'text',
+        content: 'Failed to send message. Please try again.',
+        timestamp: new Date(),
+        role: 'assistant',
+      }]);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handleAudioCapture = useCallback((audioBlob: Blob) => {
+  const handleAudioCapture = useCallback(async (audioBlob: Blob) => {
+    setIsProcessing(true);
+
+    // Add user message optimistically
     const audioUrl = URL.createObjectURL(audioBlob);
-    // Mock transcription
-    const mockTranscriptions = [
-      'Show me the latest products',
-      'Search for diamond rings',
-      'I need a gold necklace',
-      'What are the trending items',
-    ];
-    const transcription = mockTranscriptions[Math.floor(Math.random() * mockTranscriptions.length)];
+    const userMessage: Message = {
+      id: generateId(),
+      type: 'audio',
+      content: audioUrl,
+      timestamp: new Date(),
+      role: 'user',
+      metadata: { transcription: '(transcribing...)', mimeType: audioBlob.type },
+    };
+    setMessages(prev => [...prev, userMessage]);
 
-    addMessage('audio', audioUrl, {
-      transcription,
-      duration: Math.random() * 5 + 1,
-      mimeType: audioBlob.type,
-    });
-  }, [addMessage]);
+    try {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.webm');
 
-  const handleImageCapture = useCallback((imageFile: File) => {
+      const response = await fetch('/api/chat/audio', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Failed to send audio');
+
+      const data: ChatApiResponse = await response.json();
+
+      // Update user message with transcription from response
+      setMessages(prev => prev.map(msg =>
+        msg.id === userMessage.id
+          ? { ...msg, metadata: { ...msg.metadata, ...data.message.metadata } }
+          : msg
+      ));
+
+      // Add assistant response
+      setMessages(prev => [...prev, convertMessage(data.message)]);
+      setAccumulatedState(convertState(data.state));
+    } catch (error) {
+      console.error('Error sending audio message:', error);
+      setMessages(prev => [...prev, {
+        id: generateId(),
+        type: 'text',
+        content: 'Failed to process audio. Please try again.',
+        timestamp: new Date(),
+        role: 'assistant',
+      }]);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, []);
+
+  const handleImageCapture = useCallback(async (imageFile: File) => {
+    setIsProcessing(true);
+
+    // Add user message optimistically
     const imageUrl = URL.createObjectURL(imageFile);
-    // Mock feature detection
-    const mockFeatures = [
-      ['jewelry', 'gold', 'elegant'],
-      ['ring', 'diamond', 'sparkle'],
-      ['necklace', 'silver', 'pendant'],
-      ['bracelet', 'modern', 'minimalist'],
-    ];
-    const features = mockFeatures[Math.floor(Math.random() * mockFeatures.length)];
+    const userMessage: Message = {
+      id: generateId(),
+      type: 'image',
+      content: imageUrl,
+      timestamp: new Date(),
+      role: 'user',
+      metadata: { features: ['analyzing...'], fileName: imageFile.name },
+    };
+    setMessages(prev => [...prev, userMessage]);
 
-    addMessage('image', imageUrl, {
-      features,
-      fileName: imageFile.name,
-      fileSize: imageFile.size,
-    });
-  }, [addMessage]);
+    try {
+      const formData = new FormData();
+      formData.append('image', imageFile);
 
-  const handleSnippetSubmit = useCallback((code: string, language: string) => {
-    addMessage('snippet', code, {
-      language,
-      lineCount: code.split('\n').length,
-      charCount: code.length,
-    });
-  }, [addMessage]);
+      const response = await fetch('/api/chat/image', {
+        method: 'POST',
+        body: formData,
+      });
 
-  const clearChat = useCallback(() => {
-    setMessages([]);
-    setAccumulatedState({
-      messageCount: 0,
-      textCount: 0,
-      audioCount: 0,
-      imageCount: 0,
-      snippetCount: 0,
-      keywords: [],
-      topics: [],
-      codeLanguages: [],
-    });
+      if (!response.ok) throw new Error('Failed to send image');
+
+      const data: ChatApiResponse = await response.json();
+
+      // Update user message with features from response
+      setMessages(prev => prev.map(msg =>
+        msg.id === userMessage.id
+          ? { ...msg, metadata: { ...msg.metadata, features: data.message.metadata?.features } }
+          : msg
+      ));
+
+      // Add assistant response
+      setMessages(prev => [...prev, convertMessage(data.message)]);
+      setAccumulatedState(convertState(data.state));
+    } catch (error) {
+      console.error('Error sending image message:', error);
+      setMessages(prev => [...prev, {
+        id: generateId(),
+        type: 'text',
+        content: 'Failed to process image. Please try again.',
+        timestamp: new Date(),
+        role: 'assistant',
+      }]);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, []);
+
+  const handleSnippetSubmit = useCallback(async (code: string, language: string) => {
+    setIsProcessing(true);
+
+    // Add user message optimistically
+    const userMessage: Message = {
+      id: generateId(),
+      type: 'snippet',
+      content: code,
+      timestamp: new Date(),
+      role: 'user',
+      metadata: { language, lineCount: code.split('\n').length, charCount: code.length },
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    try {
+      const response = await fetch('/api/chat/snippet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: code, language }),
+      });
+
+      if (!response.ok) throw new Error('Failed to send snippet');
+
+      const data: ChatApiResponse = await response.json();
+
+      // Add assistant response
+      setMessages(prev => [...prev, convertMessage(data.message)]);
+      setAccumulatedState(convertState(data.state));
+    } catch (error) {
+      console.error('Error sending snippet:', error);
+      setMessages(prev => [...prev, {
+        id: generateId(),
+        type: 'text',
+        content: 'Failed to process snippet. Please try again.',
+        timestamp: new Date(),
+        role: 'assistant',
+      }]);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, []);
+
+  const clearChat = useCallback(async () => {
+    try {
+      const response = await fetch('/api/chat/clear', { method: 'POST' });
+      if (!response.ok) throw new Error('Failed to clear chat');
+
+      const data = await response.json();
+      setMessages([]);
+      setAccumulatedState(convertState(data.state));
+    } catch (error) {
+      console.error('Error clearing chat:', error);
+      // Clear locally anyway
+      setMessages([]);
+      setAccumulatedState({
+        messageCount: 0,
+        textCount: 0,
+        audioCount: 0,
+        imageCount: 0,
+        snippetCount: 0,
+        keywords: [],
+        topics: [],
+        codeLanguages: [],
+      });
+    }
     textInputRef.current?.focus();
   }, []);
 
