@@ -44,9 +44,16 @@ module.exports = {
     historyApiFallback: true,
     hot: true,
     port: 5174,
-    proxy: {
-      '/api': 'http://localhost:8000',
-    },
+    proxy: [
+      {
+        context: ['/api/chat'],
+        target: 'http://localhost:8001',
+      },
+      {
+        context: ['/api/search'],
+        target: 'http://localhost:8000',
+      },
+    ],
   },
   devtool: 'source-map',
 };
