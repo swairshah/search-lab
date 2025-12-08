@@ -37,34 +37,36 @@ export function ChatMessage({ message }: ChatMessageProps) {
                 {((message.metadata?.duration as number) || 0).toFixed(1)}s
               </span>
               <span className="audio-transcription">
-                "{message.metadata?.transcription}"
+                "{String(message.metadata?.transcription ?? '')}"
               </span>
             </div>
             <audio src={message.content} controls className="audio-player" />
           </div>
         );
 
-      case 'image':
+      case 'image': {
+        const features = message.metadata?.features;
         return (
           <div className="message-image">
             <img src={message.content} alt="Uploaded" className="image-preview" />
-            {message.metadata?.features && (
+            {Array.isArray(features) && (
               <div className="image-features">
-                {(message.metadata.features as string[]).map((feature, i) => (
+                {features.map((feature: string, i: number) => (
                   <span key={i} className="feature-tag">{feature}</span>
                 ))}
               </div>
             )}
           </div>
         );
+      }
 
       case 'snippet':
         return (
           <div className="message-snippet">
             <div className="snippet-header">
-              <span className="snippet-language">{message.metadata?.language || 'code'}</span>
+              <span className="snippet-language">{String(message.metadata?.language ?? 'code')}</span>
               <span className="snippet-stats">
-                {message.metadata?.lineCount} lines
+                {String(message.metadata?.lineCount ?? 0)} lines
               </span>
             </div>
             <pre className="snippet-code">

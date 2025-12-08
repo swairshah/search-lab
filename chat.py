@@ -49,9 +49,16 @@ class ChatMessage(BaseModel):
     metadata: Optional[dict] = None
 
 
+class AccumulatedPanel(BaseModel):
+    """A dynamic panel to show in the accumulated state view."""
+    title: str
+    content: str  # Can be plain text, JSON string, or markdown
+
+
 class ChatResponse(BaseModel):
     message: ChatMessage
     state: dict
+    accumulated: list[AccumulatedPanel] = []
 
 
 class AccumulatedState(BaseModel):
@@ -163,12 +170,39 @@ def mock_analyze_image(image_data: bytes) -> list[str]:
 # API Endpoints
 # =============================================================================
 
+def build_accumulated_panels() -> list[dict]:
+    """Build the dynamic accumulated panels based on current state."""
+    panels = []
+
+    # Add history panel if there are messages
+    if messages:
+        history_lines = []
+        for msg in messages[-20:]:  # Last 20 messages
+            role = msg["role"]
+            content = msg["content"][:50] + ("..." if len(msg["content"]) > 50 else "")
+            history_lines.append(f"[{role}] {content}")
+        panels.append({
+            "title": "History",
+            "content": "\n".join(history_lines)
+        })
+
+    # Add keywords panel if there are keywords
+    if state.keywords:
+        panels.append({
+            "title": "Keywords",
+            "content": ", ".join(state.keywords)
+        })
+
+    return panels
+
+
 @app.get("/api/chat/state")
 async def get_state():
     """Get current accumulated state."""
     return {
         "state": state.model_dump(),
         "messages": messages[-50:],  # Last 50 messages
+        "accumulated": build_accumulated_panels(),
     }
 
 
@@ -178,7 +212,7 @@ async def clear_chat():
     global messages, state
     messages = []
     state = AccumulatedState()
-    return {"status": "cleared", "state": state.model_dump()}
+    return {"status": "cleared", "state": state.model_dump(), "accumulated": []}
 
 
 @app.post("/api/chat/text", response_model=ChatResponse)
@@ -223,6 +257,7 @@ async def send_text_message(request: TextMessage):
     return ChatResponse(
         message=ChatMessage(**assistant_msg),
         state=state.model_dump(),
+        accumulated=build_accumulated_panels(),
     )
 
 
@@ -282,6 +317,7 @@ async def send_audio_message(audio: UploadFile = File(...)):
     return ChatResponse(
         message=ChatMessage(**assistant_msg),
         state=state.model_dump(),
+        accumulated=build_accumulated_panels(),
     )
 
 
@@ -340,6 +376,7 @@ async def send_image_message(image: UploadFile = File(...)):
     return ChatResponse(
         message=ChatMessage(**assistant_msg),
         state=state.model_dump(),
+        accumulated=build_accumulated_panels(),
     )
 
 
@@ -392,6 +429,7 @@ async def send_snippet_message(request: SnippetMessage):
     return ChatResponse(
         message=ChatMessage(**assistant_msg),
         state=state.model_dump(),
+        accumulated=build_accumulated_panels(),
     )
 
 
