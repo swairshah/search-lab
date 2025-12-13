@@ -35,14 +35,9 @@ class TextMessage(BaseModel):
     content: str
 
 
-class SnippetMessage(BaseModel):
-    content: str
-    language: str
-
-
 class ChatMessage(BaseModel):
     id: str
-    type: str  # 'text' | 'audio' | 'image' | 'snippet'
+    type: str  # 'text' | 'audio' | 'image'
     content: str
     timestamp: str
     role: str  # 'user' | 'assistant'
@@ -66,10 +61,7 @@ class AccumulatedState(BaseModel):
     text_count: int = 0
     audio_count: int = 0
     image_count: int = 0
-    snippet_count: int = 0
-    keywords: list[str] = []
     topics: list[str] = []
-    code_languages: list[str] = []
 
 
 # =============================================================================
@@ -87,49 +79,23 @@ def generate_id() -> str:
 def get_timestamp() -> str:
     return datetime.now().isoformat()
 
+# =============================================================================
+# LLM stuff
+# =============================================================================
 
-def extract_keywords(text: str) -> list[str]:
-    """Extract keywords from text."""
-    stop_words = {
-        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-        'should', 'may', 'might', 'must', 'can', 'to', 'of', 'in', 'for',
-        'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
-        'before', 'after', 'above', 'below', 'between', 'and', 'but', 'if',
-        'or', 'because', 'until', 'while', 'this', 'that', 'these', 'those',
-        'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him', 'his',
-        'she', 'her', 'it', 'its', 'they', 'them', 'their', 'what', 'which',
-        'who', 'whom'
-    }
-
-    words = text.lower().split()
-    keywords = []
-    for word in words:
-        cleaned = ''.join(c for c in word if c.isalnum())
-        if cleaned and len(cleaned) > 2 and cleaned not in stop_words:
-            keywords.append(cleaned)
-
-    return list(set(keywords))[:10]
+# import dspy
+# class MemoryPad:
+#     def __init__(self, file_path: str = 'curio-sandbox/memory.txt'):
+#         self.file_path = file_path
+#         self.memory_pad = open(file_path, 'r').read() if os.path.exists(file_path) else ''
 
 
-def generate_response(msg_type: str, content: str, metadata: Optional[dict] = None) -> str:
+
+def generate_response(msg_type: str, messages: list[dict]) -> str:
     """Generate a mock assistant response."""
     if msg_type == 'text':
-        keywords = extract_keywords(content)
-        return f"Received your message. Extracted {len(keywords)} keywords and updated the conversation state."
-    elif msg_type == 'audio':
-        duration = metadata.get('duration', 0) if metadata else 0
-        transcription = metadata.get('transcription', '') if metadata else ''
-        return f"Received audio message ({duration:.1f}s). Transcription: \"{transcription}\""
-    elif msg_type == 'image':
-        features = metadata.get('features', []) if metadata else []
-        return f"Received image. Detected features: {', '.join(features)}"
-    elif msg_type == 'snippet':
-        language = metadata.get('language', 'code') if metadata else 'code'
-        line_count = metadata.get('line_count', 0) if metadata else 0
-        return f"Received {language} snippet ({line_count} lines). Added to state."
+        return f"Received your message. Updated the conversation state."
     return "Message received."
-
 
 # =============================================================================
 # Mock Services
@@ -186,13 +152,6 @@ def build_accumulated_panels() -> list[dict]:
             "content": "\n".join(history_lines)
         })
 
-    # Add keywords panel if there are keywords
-    if state.keywords:
-        panels.append({
-            "title": "Keywords",
-            "content": ", ".join(state.keywords)
-        })
-
     return panels
 
 
@@ -234,15 +193,8 @@ async def send_text_message(request: TextMessage):
     # Update state
     state.message_count += 1
     state.text_count += 1
-    keywords = extract_keywords(request.content)
-    for kw in keywords:
-        if kw not in state.keywords:
-            state.keywords.append(kw)
-    state.keywords = state.keywords[:20]  # Keep top 20
 
-    # Generate response
-    time.sleep(random.uniform(0.2, 0.5))  # Simulate processing
-    response_content = generate_response("text", request.content)
+    response_content = generate_response("text", messages)
 
     assistant_msg = {
         "id": generate_id(),
@@ -293,13 +245,6 @@ async def send_audio_message(audio: UploadFile = File(...)):
     state.audio_count += 1
     if "voice" not in state.topics:
         state.topics.append("voice")
-
-    # Extract keywords from transcription
-    keywords = extract_keywords(transcription)
-    for kw in keywords:
-        if kw not in state.keywords:
-            state.keywords.append(kw)
-    state.keywords = state.keywords[:20]
 
     # Generate response
     response_content = generate_response("audio", transcription, metadata)
@@ -354,12 +299,6 @@ async def send_image_message(image: UploadFile = File(...)):
     if "visual" not in state.topics:
         state.topics.append("visual")
 
-    # Add features as keywords
-    for feature in features:
-        if feature not in state.keywords:
-            state.keywords.append(feature)
-    state.keywords = state.keywords[:20]
-
     # Generate response
     response_content = generate_response("image", "", metadata)
 
@@ -378,60 +317,6 @@ async def send_image_message(image: UploadFile = File(...)):
         state=state.model_dump(),
         accumulated=build_accumulated_panels(),
     )
-
-
-@app.post("/api/chat/snippet", response_model=ChatResponse)
-async def send_snippet_message(request: SnippetMessage):
-    """Send a code snippet message."""
-    global state
-
-    line_count = len(request.content.strip().split('\n'))
-
-    metadata = {
-        "language": request.language,
-        "line_count": line_count,
-        "char_count": len(request.content),
-    }
-
-    # Create user message
-    user_msg = {
-        "id": generate_id(),
-        "type": "snippet",
-        "content": request.content,
-        "timestamp": get_timestamp(),
-        "role": "user",
-        "metadata": metadata,
-    }
-    messages.append(user_msg)
-
-    # Update state
-    state.message_count += 1
-    state.snippet_count += 1
-    if "code" not in state.topics:
-        state.topics.append("code")
-    if request.language and request.language not in state.code_languages:
-        state.code_languages.append(request.language)
-
-    # Generate response
-    time.sleep(random.uniform(0.1, 0.3))
-    response_content = generate_response("snippet", request.content, metadata)
-
-    assistant_msg = {
-        "id": generate_id(),
-        "type": "text",
-        "content": response_content,
-        "timestamp": get_timestamp(),
-        "role": "assistant",
-        "metadata": None,
-    }
-    messages.append(assistant_msg)
-
-    return ChatResponse(
-        message=ChatMessage(**assistant_msg),
-        state=state.model_dump(),
-        accumulated=build_accumulated_panels(),
-    )
-
 
 # =============================================================================
 # Static Files (for production)

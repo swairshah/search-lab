@@ -131,6 +131,7 @@ function ChatApp() {
       }]);
     } finally {
       setIsProcessing(false);
+      textInputRef.current?.focus();
     }
   };
 
